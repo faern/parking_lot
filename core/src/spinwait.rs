@@ -13,6 +13,10 @@ use core::sync::atomic::spin_loop_hint;
 #[inline]
 fn cpu_relax(iterations: u32) {
     for _ in 0..iterations {
+        // REVIEW: should this account for known platforms that don't actually
+        // have an implementation of `spin_loop_hint`? For example wasm, ARM,
+        // MIPS, etc, this is all a noop. On these platforms `SpinWait` may
+        // want to be a ZST that doesn't actually do anything.
         spin_loop_hint()
     }
 }
@@ -46,6 +50,9 @@ impl SpinWait {
     /// to yielding the CPU to the OS after a few iterations.
     #[inline]
     pub fn spin(&mut self) -> bool {
+        // REVIEW: the 10 and 3 constants should be extracted above and
+        // documented as to why their values are chosen and/or how they affect
+        // the spin here.
         if self.counter >= 10 {
             return false;
         }
@@ -53,6 +60,9 @@ impl SpinWait {
         if self.counter <= 3 {
             cpu_relax(1 << self.counter);
         } else {
+            // REVIEW: should this have accomodations for platforms where
+            // `thread_yield` is known to not do anything? For example wasm and
+            // such.
             thread_parker::thread_yield();
         }
         true
@@ -66,6 +76,7 @@ impl SpinWait {
     #[inline]
     pub fn spin_no_yield(&mut self) {
         self.counter += 1;
+        // REVIEW: same comment w/ 10 as above
         if self.counter > 10 {
             self.counter = 10;
         }

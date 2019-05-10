@@ -27,3 +27,6 @@ test_script:
   - travis-cargo test
   - travis-cargo --only nightly test -- --features=deadlock_detection
   - travis-cargo doc
+
+# REVIEW: travis tests for linux seem more extensive, could configuration be
+# shared to test more on windows?

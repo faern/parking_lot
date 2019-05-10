@@ -5,6 +5,8 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
+// REVIEW: I haven't looked at this at all, I'll need to do that later.
+
 use super::elision::{have_elision, AtomicElisionExt};
 use super::libstd::time::{Duration, Instant};
 use super::lock_api::{

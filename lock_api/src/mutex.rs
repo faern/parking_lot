@@ -26,6 +26,17 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 ///
 /// Implementations of this trait must ensure that the mutex is actually
 /// exclusive: a lock can't be acquired while the mutex is already locked.
+// REVIEW: this could probably have a lot more documentation about the safety
+// here and/or about the various guarantees this is expected to uphold. For
+// example:
+//
+// * What happens if the same thread locks twice?
+// * What happens if the same thread unlocks twice?
+// * What happens on try_lock if the lock is held by the current thread?
+// * What happens if you lock on one thread and unlock on another?
+//
+// Basically just enumerating some common conditions that we've run into with OS
+// primitives and how implementors of this trait are expected to handle it.
 pub unsafe trait RawMutex {
     /// Initial value for an unlocked mutex.
     const INIT: Self;
@@ -158,6 +169,8 @@ impl<R: RawMutex, T> Mutex<R, T> {
 }
 
 impl<R: RawMutex, T: ?Sized> Mutex<R, T> {
+    // REVIEW: it seems like this function should be `unsafe` with the
+    // contract that the lock must be held when calling it
     #[inline]
     fn guard(&self) -> MutexGuard<'_, R, T> {
         MutexGuard {

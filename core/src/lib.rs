@@ -61,6 +61,13 @@
     feature(thread_local, checked_duration_since)
 )]
 
+// REVIEW: for maintainability this crate should unconditionally be
+// `#![no_std]`, and then the `libstd` module is exclusively used for importing
+// items from `std`. Items from `core` can be imported as usual.
+
+// REVIEW: the "i-am-libstd" feature would probably best be something like
+// `#[cfg(rustbuild)]` or something like that printed out by the build script in
+// rust-lang/rust.
 #[cfg(not(feature = "i-am-libstd"))]
 use cfg_if::cfg_if;
 
@@ -72,6 +79,11 @@ mod libstd {
 }
 
 cfg_if! {
+    // REVIEW: following the logic here of when and where `i-am-libstd` is
+    // included is somewhat confusing, it would probably be best to simply have
+    // libstd's own build script agree with parking_lot's own build script and
+    // print out the same `cfg` annotations that the `parking_lot` crate does on
+    // crates.io.
     if #[cfg(all(any(has_sized_atomics, feature = "i-am-libstd"), target_os = "linux"))] {
         #[path = "thread_parker/linux.rs"]
         mod thread_parker;
@@ -100,6 +112,9 @@ cfg_if! {
     } else if #[cfg(all(feature = "i-am-libstd", not(target_arch = "wasm32")))] {
         compile_error!("Not allowed to fall back to generic spin lock based thread parker");
     } else {
+        // REVIEW: this implementation isn't really appropriate for most use
+        // cases other than "at least it compiles", and for libstd we'll want a
+        // compile error if this is ever used.
         #[path = "thread_parker/generic.rs"]
         mod thread_parker;
     }

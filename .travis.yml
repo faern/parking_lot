@@ -7,6 +7,8 @@ rust:
 - beta
 - nightly
 
+# REVIEW: needs to be tested on OSX
+
 before_script:
 - |
   pip install 'travis-cargo<0.2' --user &&
@@ -38,6 +40,13 @@ script:
 - cargo run --release --bin mutex -- 2 1 0 1 2
 - cargo run --release --bin rwlock -- 1 1 1 0 1 2
 - cd ..
+
+# REVIEW: needs a test that parking_lot still builds when structured like
+# libstd (aka including modules manually). This is easy to break by accident and
+# CI should help that import paths and such are always organized correctly.
+
+# REVIEW: needs at least one builder for all of `thread_parker` implementations
+# (at least building it, executing it would be best), missing ones are wasm/OSX
 
 env:
   global:

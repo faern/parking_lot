@@ -22,6 +22,7 @@ lazy_static = "1.0"
 bincode = {version = "1.1.3"}
 
 [build-dependencies]
+# REVIEW: would recommend `autocfg` instead of `rustc_version`
 rustc_version = "0.2"
 
 [features]

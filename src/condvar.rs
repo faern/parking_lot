@@ -5,6 +5,9 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
+// REVIEW: this could really use a module doc comment to explain how this
+// condvar is implemented and the general protocol strategy.
+
 use super::libstd::time::{Duration, Instant};
 use super::lock_api::RawMutex as RawMutexTrait;
 use super::mutex::MutexGuard;
@@ -141,7 +144,7 @@ impl Condvar {
     }
 
     #[cold]
-    #[inline(never)]
+    #[inline(never)] // this shouldn't be necessary
     fn notify_one_slow(&self, mutex: *mut RawMutex) -> bool {
         unsafe {
             // Unpark one thread and requeue the rest onto the mutex
@@ -163,6 +166,10 @@ impl Condvar {
                 // locking the queue. There is the possibility of a race if the
                 // mutex gets locked after we check, but that doesn't matter in
                 // this case.
+                //
+                // REVIEW: what does this comment mean when it refers to
+                // "unlocking the mutex"? What's being unlocked when a condvar
+                // is notified?
                 if (*mutex).mark_parked_if_locked() {
                     RequeueOp::RequeueOne
                 } else {
@@ -203,7 +210,7 @@ impl Condvar {
     }
 
     #[cold]
-    #[inline(never)]
+    #[inline(never)] // this shouldn't be necessary
     fn notify_all_slow(&self, mutex: *mut RawMutex) -> usize {
         unsafe {
             // Unpark one thread and requeue the rest onto the mutex
@@ -223,12 +230,20 @@ impl Condvar {
                 // threads.
                 self.state.store(ptr::null_mut(), Ordering::Relaxed);
 
+                // REVIEW: at this point since `self.state` points to the same
+                // mutex there's an invariant that we're going to wake at least
+                // one thread up, right? Can that be documented?
+
                 // Unpark one thread if the mutex is unlocked, otherwise just
                 // requeue everything to the mutex. This is safe to do here
                 // since unlocking the mutex when the parked bit is set requires
                 // locking the queue. There is the possibility of a race if the
                 // mutex gets locked after we check, but that doesn't matter in
                 // this case.
+                //
+                // REVIEW: this is a copy/paste comment above, and if it's
+                // exactly the same should refer the other. Otherwise it's the
+                // same review comment as above.
                 if (*mutex).mark_parked_if_locked() {
                     RequeueOp::RequeueAll
                 } else {
@@ -238,6 +253,10 @@ impl Condvar {
             let callback = |op, result: UnparkResult| {
                 // If we requeued threads to the mutex, mark it as having
                 // parked threads. The RequeueAll case is already handled above.
+                //
+                // REVIEW: the lock for the parking lot bucket is held here,
+                // right? That means it's ok for there to be parked threads but
+                // the park bit isn't actually set for the lock?
                 if op == RequeueOp::UnparkOneRequeueRest && result.requeued_threads != 0 {
                     (*mutex).mark_parked();
                 }
@@ -360,6 +379,7 @@ impl Condvar {
             }
 
             // ... and re-lock it once we are done sleeping
+            // REVIEW: how is it possible that TOKEN_HANDOFF gets produced here?
             if result == ParkResult::Unparked(TOKEN_HANDOFF) {
                 deadlock::acquire_resource(mutex as *const _ as usize);
             } else {

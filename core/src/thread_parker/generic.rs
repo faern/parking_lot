@@ -5,6 +5,10 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
+// REVIEW: libstd would never want to use this module and it should be a compile
+// error if libstd ever uses this module. (is there any platform which uses this
+// module usefully?)
+
 //! A simple spin lock based thread parker. Used on platforms without better
 //! parking facilities available.
 

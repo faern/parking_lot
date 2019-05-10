@@ -18,6 +18,12 @@ unsafe impl GetThreadId for RawThreadId {
     fn nonzero_thread_id(&self) -> usize {
         // The address of a thread-local variable is guaranteed to be unique to the
         // current thread, and is also guaranteed to be non-zero.
+        //
+        // REVIEW: is the usage of `mem::uninitialized` really justified here?
+        //
+        // REVIEW: do we really have a guarantee from LLVM that a readonly
+        // thread local will never be promoted to a constant in a static address
+        // for the entire program?
         thread_local!(static KEY: u8 = unsafe { mem::uninitialized() });
         KEY.with(|x| x as *const _ as usize)
     }

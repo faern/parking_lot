@@ -13,6 +13,9 @@
 #![warn(rust_2018_idioms)]
 #![cfg_attr(feature = "nightly", feature(asm))]
 
+// REVIEW: would recommend unconditionally tagging this crate as `#![no_std]`
+// and then manually handling `i-am-libstd`.
+
 mod libstd {
     #[cfg(feature = "i-am-libstd")]
     pub use crate::*;

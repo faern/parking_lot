@@ -26,6 +26,7 @@ unsafe fn unreachable() -> ! {
     if cfg!(debug_assertions) {
         unreachable!();
     } else {
+        // REVIEW: nowadays there's `core::hint::unreachable_unchecked` I think?
         enum Void {}
         match *(1 as *const Void) {}
     }

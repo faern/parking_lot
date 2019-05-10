@@ -5,6 +5,12 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
+// REVIEW: most of this module looks very similar to `RawMutex`, could it just
+// be built on top of that? Presumably the fast path is "load the byte in the
+// mutex and see if the done bit is set" and the slow path is "lock the mutex
+// then go do everything". That'd require a crate-public way to get the
+// `&AtomicU8` from a `RawMutex` but that's probably fine.
+
 use super::parking_lot_core::{self, SpinWait, DEFAULT_PARK_TOKEN, DEFAULT_UNPARK_TOKEN};
 use super::util::UncheckedOptionExt;
 #[cfg(any(has_sized_atomics, feature = "i-am-libstd"))]
@@ -182,6 +188,7 @@ impl Once {
         }
 
         let mut f = Some(f);
+        // REVIEW: is the `unchecked_unwrap` really justified here?
         self.call_once_slow(false, &mut |_| unsafe { f.take().unchecked_unwrap()() });
     }
 
@@ -221,10 +228,16 @@ impl Once {
     // currently no way to take an `FnOnce` and call it via virtual dispatch
     // without some allocation overhead.
     #[cold]
-    #[inline(never)]
+    #[inline(never)] // REVIEW: this likely isn't needed
     fn call_once_slow(&self, ignore_poison: bool, f: &mut dyn FnMut(OnceState)) {
+        // REVIEW: this seems like an overly complicated implementation of
+        // `call_once_slow`, for example why bother spinning? Is there actual
+        // data pointing to the need for this?
         let mut spinwait = SpinWait::new();
         let mut state = self.0.load(Ordering::Relaxed);
+
+        // REVIEW: this `loop` could really do with some documentation to the
+        // protocol that it's implementing.
         loop {
             // If another thread called the closure, we're done
             if state & DONE_BIT != 0 {
@@ -264,6 +277,9 @@ impl Once {
             }
 
             // Set the parked bit
+            //
+            // REVIEW: this could use a more substantial comment explaining why
+            // we're bailing out, why we're setting the bit, etc, etc.
             if state & PARKED_BIT == 0 {
                 if let Err(x) = self.0.compare_exchange_weak(
                     state,

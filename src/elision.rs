@@ -25,6 +25,7 @@ pub trait AtomicElisionExt {
 // Indicates whether the target architecture supports lock elision
 #[inline]
 pub fn have_elision() -> bool {
+    // REVIEW: initially will not want to enable lock elision in libstd.
     cfg!(all(
         any(feature = "nightly", feature = "i-am-libstd"),
         any(target_arch = "x86", target_arch = "x86_64"),

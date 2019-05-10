@@ -73,6 +73,10 @@ impl KeyedEvent {
                 return None;
             }
 
+            // REVIEW: The first hit for this api on google is "Undocumented
+            // functions of NTDLL". The standard library has historically been
+            // conservative to not use undocumented platform features where
+            // possible, such as symbolication APIs for backtraces on OSX.
             let NtCreateKeyedEvent =
                 GetProcAddress(ntdll, b"NtCreateKeyedEvent\0".as_ptr() as LPCSTR);
             if NtCreateKeyedEvent.is_null() {
