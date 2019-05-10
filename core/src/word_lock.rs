@@ -5,6 +5,9 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
+// REVIEW: this module could use documentation at least pointing to the parking
+// lot post but should also explin what a `WordLock` is and its primary purpose.
+
 use super::spinwait::SpinWait;
 use super::thread_parker::ThreadParker;
 use core::{
@@ -52,11 +55,23 @@ fn with_thread_data<F, T>(f: F) -> T
 where
     F: FnOnce(&ThreadData) -> T,
 {
+    // REVIEW: this seems like it could be simplified:
+    //
+    //  if cheap {
+    //      f(&ThreadData::new())
+    //  } else {
+    //      THREAD_DATA.with(f)
+    //  }
+    //
+    // and that's it?
+
     let mut thread_data_ptr = ptr::null();
     // If ThreadData is expensive to construct, then we want to use a cached
     // version in thread-local storage if possible.
     if !ThreadParker::IS_CHEAP_TO_CONSTRUCT {
         thread_local!(static THREAD_DATA: ThreadData = ThreadData::new());
+        // REVIEW: should this assert that the linked list pointers in
+        // `ThreadData` are all null/empty?
         if let Ok(tls_thread_data) = THREAD_DATA.try_with(|x| x as *const ThreadData) {
             thread_data_ptr = tls_thread_data;
         }
@@ -76,6 +91,19 @@ const QUEUE_MASK: usize = !3;
 
 // Word-sized lock that is used to implement the parking_lot API. Since this
 // can't use parking_lot, it instead manages its own queue of waiting threads.
+//
+// REVIEW: this documentation should be expanded with the purpose of `WordLock`,
+// why it exists, and perhaps why we aren't just using normal OS primitives (aka
+// why it's still justified to roll our own.
+//
+// REVIEW: it would also be nice to have documentation of the locking protocol
+// so readers don't have to reverse engineer it.
+//
+// REVIEW: why does `WordLock` need to be so optimized and small?
+//
+// REVIEW: I ended up bailing out reviewing this file once I got to
+// `unlock_slow`, can continue after I've got an idea of the high-level locking
+// strategy.
 pub struct WordLock {
     state: AtomicUsize,
 }
@@ -101,6 +129,9 @@ impl WordLock {
     #[inline]
     pub unsafe fn unlock(&self) {
         let state = self.state.fetch_sub(LOCKED_BIT, Ordering::Release);
+        // REVIEW: not actually having an understanding of the locking protocol
+        // here yet this `if` statement is pretty mysterious to me and it's not
+        // clear why this is the fast path.
         if state.is_queue_locked() || state.queue_head().is_null() {
             return;
         }
@@ -108,6 +139,10 @@ impl WordLock {
     }
 
     #[cold]
+    // REVIEW: in general `inline(never)` shouldn't be used. Lacking `#[inline]`
+    // and using `#[cold]` should be more than enough for codegen and LLVM.
+    // There may be esoteric cases where it's still advantageous to inline and
+    // `inline(never)` would block that.
     #[inline(never)]
     fn lock_slow(&self) {
         let mut spinwait = SpinWait::new();
@@ -137,6 +172,11 @@ impl WordLock {
             state = with_thread_data(|thread_data| {
                 // The pthread implementation is still unsafe, so we need to surround `prepare_park`
                 // with `unsafe {}`.
+                //
+                // REVIEW: this shouldn't be conditionally `unsafe` depending on
+                // the platform, it should have a uniform interface for all
+                // platforms with documented guarantees about how to make it
+                // safe on all platforms.
                 #[allow(unused_unsafe)]
                 unsafe {
                     thread_data.parker.prepare_park();
@@ -288,6 +328,8 @@ impl WordLock {
     }
 }
 
+// REVIEW: it'd probably be more clear to have `struct LockState(usize)` rather
+// than an extension trait for all `usize` values.
 trait LockState {
     fn is_locked(self) -> bool;
     fn is_queue_locked(self) -> bool;

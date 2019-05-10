@@ -5,6 +5,9 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
+// REVIEW: this module could definitely use a module comment indicating what's
+// going on and high-level concepts.
+
 use super::libstd::time::{Duration, Instant};
 use super::thread_parker::ThreadParker;
 use super::util::UncheckedOptionExt;
@@ -28,6 +31,15 @@ use smallvec::SmallVec;
 // around the stdio file descriptors.
 // Here we use #[linkage] and #[export_name] to make both versions point to
 // the same instance.
+//
+// REVIEW: Hm yeah something else will be needed here, we shouldn't be dealing
+// with mangling like this and/or symbol linkage, it's just asking for problems.
+// It's long been thought that unit tests of libstd itself are just way too
+// difficult to deal with and this could be the nail in the coffin. If this
+// can't be fixed by other means then all unit tests in libstd should be
+// extracted to standalone tests in `src/libstd/tests` in the same manner as
+// `src/libcore/tests` and then unit tests for the libstd library should be
+// disabled.
 #[cfg_attr(all(test, feature = "i-am-libstd"), linkage = "available_externally")]
 #[cfg_attr(
     feature = "i-am-libstd",
@@ -82,6 +94,8 @@ struct Bucket {
     mutex: WordLock,
 
     // Linked list of threads waiting on this bucket
+    // REVIEW: it seems like these should be `UnsafeCell` because they're
+    // modified from multiple threads.
     queue_head: Cell<*const ThreadData>,
     queue_tail: Cell<*const ThreadData>,
 
@@ -102,6 +116,7 @@ impl Bucket {
 }
 
 struct FairTimeout {
+    // REVIEW: what is `be_fair`? (it's really far away from here..)
     // Next time at which point be_fair should be set
     timeout: Instant,
 
@@ -193,6 +208,14 @@ where
     // to construct. Try to use a thread-local version if possible. Otherwise just
     // create a ThreadData on the stack
     let mut thread_data_storage = None;
+
+    // REVIEW: there's a circular dependency between thread locals and
+    // synchronization. On systems that don't have `#[thread_local]` (aka
+    // windows) soemtimes a `Mutex` is used to synchronize creation of keys.
+    // That means that attempting to access the thread local here may acquire a
+    // lock which would in turn come back to access thread data?
+    //
+    // REVIEW: what are the error cases that accessing the thread local fails?
     thread_local!(static THREAD_DATA: ThreadData = ThreadData::new());
     let thread_data_ptr = THREAD_DATA
         .try_with(|x| x as *const ThreadData)
@@ -221,9 +244,14 @@ fn get_hashtable() -> *mut HashTable {
 }
 
 // Get a pointer to the latest hash table, creating one if it doesn't exist yet.
+//
+// REVIEW: this seems duplicated with grow_hashtable and get_hashtable, could
+// this be folded into an existing function?
 #[cold]
 #[inline(never)]
 fn create_hashtable() -> *mut HashTable {
+    // REVIEW: the first argument is "num_threads", so why is LOAD_FACTOR passed
+    // in?
     let new_table = Box::into_raw(HashTable::new(LOAD_FACTOR, ptr::null()));
 
     // If this fails then it means some other thread created the hash
@@ -307,6 +335,8 @@ unsafe fn grow_hashtable(num_threads: usize) {
         while !current.is_null() {
             let next = (*current).next_in_queue.get();
             let hash = hash((*current).key.load(Ordering::Relaxed), new_table.hash_bits);
+            // REVIEW: this looks similar to the queueing code in `park`, could
+            // this and that be refactored to use the same code?
             if new_table.entries[hash].queue_tail.get().is_null() {
                 new_table.entries[hash].queue_head.set(current);
             } else {
@@ -332,6 +362,7 @@ unsafe fn grow_hashtable(num_threads: usize) {
 }
 
 // Hash function for addresses
+// REVIEW: presumably this came from somewhere else? Could that be documented?
 #[cfg(target_pointer_width = "32")]
 #[inline]
 fn hash(key: usize, bits: u32) -> usize {
@@ -344,6 +375,8 @@ fn hash(key: usize, bits: u32) -> usize {
 }
 
 // Lock the bucket for the given key
+// REVIEW: return `&'static` bucket instead of `&'a`?
+// REVIEW: should this return an RAII thing to unlock the bucket?
 #[inline]
 unsafe fn lock_bucket<'a>(key: usize) -> &'a Bucket {
     let mut bucket;
@@ -440,9 +473,11 @@ unsafe fn lock_bucket_pair<'a>(key1: usize, key2: usize) -> (&'a Bucket, &'a Buc
 // Unlock a pair of buckets
 #[inline]
 unsafe fn unlock_bucket_pair(bucket1: &Bucket, bucket2: &Bucket) {
+    // REVIEW: perhaps `ptr::eq`?
     if bucket1 as *const _ == bucket2 as *const _ {
         bucket1.mutex.unlock();
     } else if bucket1 as *const _ < bucket2 as *const _ {
+        // REVIEW: why does the order of unlocking matter here?
         bucket2.mutex.unlock();
         bucket1.mutex.unlock();
     } else {
@@ -455,6 +490,8 @@ unsafe fn unlock_bucket_pair(bucket1: &Bucket, bucket2: &Bucket) {
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum ParkResult {
     /// We were unparked by another thread with the given token.
+    // REVIEW: having not made it that far in his module I'm not really sure
+    // what a token is or what we would do with it.
     Unparked(UnparkToken),
 
     /// The validation callback returned false.
@@ -566,20 +603,30 @@ pub const DEFAULT_PARK_TOKEN: ParkToken = ParkToken(0);
 /// you could otherwise interfere with the operation of other synchronization
 /// primitives.
 ///
+// REVIEW: if a random key is passed in, is that the only thing that happens?
+// (messing with other primitives) If I'm the only user of `parking_lot` it's
+// memory safe to pass in any value, right?
+///
 /// The `validate` and `timed_out` functions are called while the queue is
 /// locked and must not panic or call into any function in `parking_lot`.
+///
+// REVIEW: can the requirement of "must not panic" be lifted? Could a "bomb" be
+// placed on the stack to cause a process abort if unwinding happens?
 ///
 /// The `before_sleep` function is called outside the queue lock and is allowed
 /// to call `unpark_one`, `unpark_all`, `unpark_requeue` or `unpark_filter`, but
 /// it is not allowed to call `park` or panic.
+///
+/// REVIEW: could this be asserted internally instead of being part of the
+/// `unsafe` contract?
 #[inline]
 pub unsafe fn park<V, B, T>(
     key: usize,
-    validate: V,
+    validate: V, // REVIEW: nowadays `validate: impl FnOnce() -> bool` may be easier to read
     before_sleep: B,
     timed_out: T,
-    park_token: ParkToken,
-    timeout: Option<Instant>,
+    park_token: ParkToken, // REVIEW: what is this?
+    timeout: Option<Instant>, // REVIEW: not documented above
 ) -> ParkResult
 where
     V: FnOnce() -> bool,
@@ -614,9 +661,9 @@ where
         // Invoke the pre-sleep callback
         before_sleep();
 
-        // Park our thread and determine whether we were woken up by an unpark or by
-        // our timeout. Note that this isn't precise: we can still be unparked since
-        // we are still in the queue.
+        // Park our thread and determine whether we were woken up by an unpark
+        // or by our timeout. Note that this isn't precise: we can still be
+        // unparked since we are still in the queue.
         let unparked = match timeout {
             Some(timeout) => thread_data.parker.park_until(timeout),
             None => {
@@ -638,6 +685,12 @@ where
 
         // Now we need to check again if we were unparked or timed out. Unlike the
         // last check this is precise because we hold the bucket lock.
+        //
+        // REVIEW: this branch isn't quite clear to me, why is this needed in
+        // addition with `unparked` above? This is only used in the case that
+        // `park_until` returns `false`, but doesn't that mean (given the
+        // platform-specific implementations) that the timeout elapsed so
+        // `timed_out` should be asserted to be true?
         if !thread_data.parker.timed_out() {
             bucket.mutex.unlock();
             return ParkResult::Unparked(thread_data.unpark_token.get());
@@ -648,6 +701,9 @@ where
         let mut current = bucket.queue_head.get();
         let mut previous = ptr::null();
         let mut was_last_thread = true;
+
+        // REVIEW: Should this be `loop` followed by an assert that `current`
+        // isn't null?
         while !current.is_null() {
             if current == thread_data {
                 let next = (*current).next_in_queue.get();
@@ -657,6 +713,19 @@ where
                 } else {
                     // Scan the rest of the queue to see if there are any other
                     // entries with the given key.
+                    //
+                    // REVIEW: these linear scans seem interesting in the sense
+                    // of that the result may not even be used. In the
+                    // description in the blog post it sounded like the boolean
+                    // passed through is simply "may have more threads" but here
+                    // it looks like it's trying to be "is there more threads"
+                    // (a precise answer vs a loose answer). The loose answer
+                    // can presumably be "is there anything else in the queue"
+                    // while the precise answer requires a full scan. Does the
+                    // Rust version of parking_lot have good reason to provide
+                    // a precise answer rather than a loose one? Does WebKit
+                    // take this strategy nowadays? Are we not worried about the
+                    // scan slowing things down later on?
                     let mut scan = next;
                     while !scan.is_null() {
                         if (*scan).key.load(Ordering::Relaxed) == key {
@@ -669,6 +738,9 @@ where
 
                 // Callback to indicate that we timed out, and whether we were the
                 // last thread on the queue.
+                //
+                // REVIEW: might be a bit clearer if this were on the outside of
+                // the `loop`?
                 timed_out(key, was_last_thread);
                 break;
             } else {
@@ -710,9 +782,13 @@ where
 ///
 /// The `callback` function is called while the queue is locked and must not
 /// panic or call into any function in `parking_lot`.
+///
+// REVIEW: similar comments to `park` above about the safety considerations here
 #[inline]
 pub unsafe fn unpark_one<C>(key: usize, callback: C) -> UnparkResult
 where
+    // REVIEW: should this perhaps be `&UnparkResult` to show that it's returned
+    // later?
     C: FnOnce(UnparkResult) -> UnparkToken,
 {
     // Lock the bucket for the given key
@@ -724,10 +800,14 @@ where
     let mut previous = ptr::null();
     let mut result = UnparkResult::default();
     while !current.is_null() {
+        // REVIEW: might be a bit more readable to invert this condition and
+        // `continue` in the else case to deindent most of the body here.
         if (*current).key.load(Ordering::Relaxed) == key {
             // Remove the thread from the queue
             let next = (*current).next_in_queue.get();
             link.set(next);
+            // REVIEW: this is the same as above (remove and scan forward), so
+            // could the code be deduplicated?
             if bucket.queue_tail.get() == current {
                 bucket.queue_tail.set(previous);
             } else {
@@ -762,6 +842,8 @@ where
 
             return result;
         } else {
+            // REVIEW: This is in at least one location, so maybe could benefit
+            // from a custom iterator type?
             link = &(*current).next_in_queue;
             previous = current;
             current = link.get();
@@ -794,6 +876,8 @@ pub unsafe fn unpark_all(key: usize, unpark_token: UnparkToken) -> usize {
     let mut link = &bucket.queue_head;
     let mut current = bucket.queue_head.get();
     let mut previous = ptr::null();
+
+    // REVIEW: is this really worth the `#[cfg]`?
     #[cfg(not(feature = "i-am-libstd"))]
     let mut threads = SmallVec::<[_; 8]>::new();
     #[cfg(feature = "i-am-libstd")]
@@ -892,8 +976,13 @@ where
     let mut requeue_threads_tail: *const ThreadData = ptr::null();
     let mut wakeup_thread = None;
     while !current.is_null() {
+        // REVIEW: same as above inverting the condition can help reduce the
+        // amount of indentation here.
         if (*current).key.load(Ordering::Relaxed) == key_from {
             // Remove the thread from the queue
+            // REVIEW: similar to above there's a ton of linked list operations
+            // scattered throughout here and it'd be great to clean that up with
+            // methods/helpers/etc to make the intent of this function clearer.
             let next = (*current).next_in_queue.get();
             link.set(next);
             if bucket_from.queue_tail.get() == current {
@@ -995,6 +1084,7 @@ where
 ///
 /// The `filter` and `callback` functions are called while the queue is locked
 /// and must not panic or call into any function in `parking_lot`.
+// REVIEW: I'll need to come back to this, losing steam by this point.
 #[inline]
 pub unsafe fn unpark_filter<F, C>(key: usize, mut filter: F, callback: C) -> UnparkResult
 where
@@ -1118,6 +1208,7 @@ pub mod deadlock {
     }
 }
 
+// REVIEW: FWIW I'm just skipping this entirely
 #[cfg(feature = "deadlock_detection")]
 mod deadlock_impl {
     use super::{get_hashtable, lock_bucket, with_thread_data, ThreadData, NUM_THREADS};

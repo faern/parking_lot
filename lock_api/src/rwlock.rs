@@ -28,6 +28,10 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// exclusive: an exclusive lock can't be acquired while an exclusive or shared
 /// lock exists, and a shared lock can't be acquire while an exclusive lock
 /// exists.
+
+// REVIEW: same comments as the `RawMutex` trait elsewhere, more docs about
+// expected various corner cases and how they're expected to play out would be
+// good to have here.
 pub unsafe trait RawRwLock {
     /// Initial value for an unlocked `RwLock`.
     const INIT: Self;
@@ -153,6 +157,10 @@ pub unsafe trait RawRwLockRecursiveTimed: RawRwLockRecursive + RawRwLockTimed {
 /// This requires acquiring a special "upgradable read lock" instead of a
 /// normal shared lock. There may only be one upgradable lock at any time,
 /// otherwise deadlocks could occur when upgrading.
+
+// REVIEW: this could definitely use more extensive documentation about the
+// unsafe contract here and the expected protocol and interactions of these
+// methods.
 pub unsafe trait RawRwLockUpgrade: RawRwLock {
     /// Acquires an upgradable lock, blocking the current thread until it is able to do so.
     fn lock_upgradable(&self);
@@ -295,6 +303,8 @@ impl<R: RawRwLock, T> RwLock<R, T> {
 }
 
 impl<R: RawRwLock, T: ?Sized> RwLock<R, T> {
+    // REVIEW: it seems like these functions should be `unsafe` with the
+    // contract that the lock must be held when calling them
     #[inline]
     fn read_guard(&self) -> RwLockReadGuard<'_, R, T> {
         RwLockReadGuard {
@@ -612,6 +622,8 @@ impl<R: RawRwLockRecursiveTimed, T: ?Sized> RwLock<R, T> {
 }
 
 impl<R: RawRwLockUpgrade, T: ?Sized> RwLock<R, T> {
+    // REVIEW: it seems like this function should be `unsafe` with the
+    // contract that the lock must be held when calling it
     #[inline]
     fn upgradable_guard(&self) -> RwLockUpgradableReadGuard<'_, R, T> {
         RwLockUpgradableReadGuard {
@@ -796,7 +808,9 @@ impl<'a, R: RawRwLock + 'a, T: ?Sized + 'a> RwLockReadGuard<'a, R, T> {
     ///
     /// This is safe because `&mut` guarantees that there exist no other
     /// references to the data protected by the `RwLock`.
-    #[cfg(not(feature = "i-am-libstd"))]
+    #[cfg(not(feature = "i-am-libstd"))] // REVIEW: why the `i-am-libstd` check here?
+    // REVIEW: I'm noticing that this is probably in a number of locations, but
+    // it's not clear why various methods are configured out in that build.
     #[inline]
     pub fn unlocked<F, U>(s: &mut Self, f: F) -> U
     where
@@ -995,6 +1009,9 @@ impl<'a, R: RawRwLockUpgradeDowngrade + 'a, T: ?Sized + 'a> RwLockWriteGuard<'a,
     /// then other readers may not be able to acquire the lock even if it was
     /// downgraded.
     pub fn downgrade_to_upgradable(s: Self) -> RwLockUpgradableReadGuard<'a, R, T> {
+        // REVIEW: as a note, it's somewhat spooky that there's no `unsafe` code
+        // here. In theory the construction of `RwLockUpgradableReadGuard` is
+        // unsafe and that can't be expressed though.
         s.rwlock.raw.downgrade_to_upgradable();
         let rwlock = s.rwlock;
         mem::forget(s);

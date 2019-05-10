@@ -6,6 +6,7 @@
 // copied, modified, or distributed except according to those terms.
 
 use super::super::libstd::time::Instant;
+// REVIEW: I'd recommend a `*` import to avoid manually listing all this...
 #[cfg(feature = "i-am-libstd")]
 use crate::sys::c::{
     GetLastError, GetModuleHandleA, GetProcAddress, BOOL, DWORD, ERROR_TIMEOUT, FALSE, INFINITE,
@@ -32,6 +33,8 @@ use winapi::{
 
 #[allow(non_snake_case)]
 pub struct WaitAddress {
+    // REVIEW: these signatures should be validated against the type signatures
+    // in winapi
     WaitOnAddress: extern "system" fn(
         Address: PVOID,
         CompareAddress: PVOID,
@@ -47,6 +50,8 @@ impl WaitAddress {
         unsafe {
             // MSDN claims that that WaitOnAddress and WakeByAddressSingle are
             // located in kernel32.dll, but they are lying...
+
+            // REVIEW: how stable is this name to rely on it?
             let synch_dll =
                 GetModuleHandleA(b"api-ms-win-core-synch-l1-2-0.dll\0".as_ptr() as LPCSTR);
             if synch_dll.is_null() {
@@ -95,6 +100,8 @@ impl WaitAddress {
                 return false;
             }
             let diff = timeout - now;
+            // REVIEW: like with some other loops, this should iterate until the
+            // timeout is exhausted instead of going for an infinite sleep.
             let timeout = diff
                 .as_secs()
                 .checked_mul(1000)

@@ -5,6 +5,9 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
+// REVIEW: this module needs a doc comment going into more depth about how it's
+// implementing the `ThreadParker` protocol.
+
 use super::libstd::{thread, time::Instant};
 use core::{
     ptr,
@@ -12,12 +15,16 @@ use core::{
 };
 use libc;
 
+// REVIEW: these constants should be added to libc, verified, and used from
+// there
 const FUTEX_WAIT: i32 = 0;
 const FUTEX_WAKE: i32 = 1;
 const FUTEX_PRIVATE: i32 = 128;
 
 // x32 Linux uses a non-standard type for tv_nsec in timespec.
 // See https://sourceware.org/bugzilla/show_bug.cgi?id=16437
+//
+// REVIEW: is this something that should be fixed in `libc`?
 #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
 #[allow(non_camel_case_types)]
 type tv_nsec_t = i64;
@@ -27,6 +34,8 @@ type tv_nsec_t = libc::c_long;
 
 // Helper type for putting a thread to sleep until some other thread wakes it up
 pub struct ThreadParker {
+    // REVIEW: is it really worth it to gate this entire module on the existence
+    // of `AtomicI32` rather than using `AtomicUsize`?
     futex: AtomicI32,
 }
 
@@ -43,6 +52,15 @@ impl ThreadParker {
     // Prepares the parker. This should be called before adding it to the queue.
     #[inline]
     pub fn prepare_park(&self) {
+        // REVIEW: I suspect this isn't the first time I'm going to run into
+        // this, but non-`SeqCst` ordering makes me very uncomfortable. The
+        // current policy of libstd is to use `SeqCst` everywhere. If profiling
+        // shows that it's hot *and* there's proven code elsewhere (generally
+        // C++) that has thought through the orderings, then orderings are
+        // selectively changed away from `SeqCst`.
+        //
+        // Have spots like this really been profiles to show them as hot enough
+        // to deserve non-`SeqCst` orderings?
         self.futex.store(1, Ordering::Relaxed);
     }
 
@@ -75,6 +93,12 @@ impl ThreadParker {
             let diff = timeout - now;
             if diff.as_secs() as libc::time_t as u64 != diff.as_secs() {
                 // Timeout overflowed, just sleep indefinitely
+                // REVIEW: elsewhere in libstd when we encounter this situation
+                // we simply loop until the timeout elapses, could that be done
+                // here instead of parking indefinitely? It's a bit of a moot
+                // point in the sense that indefinitely vs sleeping for years
+                // isn't really that different, but it's probably good to be
+                // consistent.
                 self.park();
                 return true;
             }
@@ -105,11 +129,16 @@ impl ThreadParker {
         debug_assert!(r == 0 || r == -1);
         if r == -1 {
             unsafe {
+                // REVIEW: instead of `libc::__errno_location` can this use
+                // `io::Error::last_os_error`?
                 debug_assert!(
                     *libc::__errno_location() == libc::EINTR
                         || *libc::__errno_location() == libc::EAGAIN
                         || (ts.is_some() && *libc::__errno_location() == libc::ETIMEDOUT)
                 );
+
+                // REVIEW: what's the platform compatibility of the futex
+                // syscall? Does it fit libstd's platform compatibility?
             }
         }
     }

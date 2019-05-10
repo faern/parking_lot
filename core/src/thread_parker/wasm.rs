@@ -5,6 +5,9 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
+// REVIEW: this module needs a doc comment going into more depth about how it's
+// implementing the `ThreadParker` protocol.
+
 use core::{
     arch::wasm32,
     sync::atomic::{AtomicI32, Ordering},
@@ -13,6 +16,10 @@ use core::{
 use super::libstd::{thread, time::Instant};
 
 // Helper type for putting a thread to sleep until some other thread wakes it up
+//
+// REVIEW: first module I ended up reading, but the documentation for all these
+// methods and this type is duplicated across all paltforms. Can the
+// documentation be centralized in just one location and duplication reduced?
 pub struct ThreadParker {
     parked: AtomicI32,
 }
@@ -61,6 +68,9 @@ impl ThreadParker {
     #[inline]
     pub fn park_until(&self, timeout: Instant) -> bool {
         while self.parked.load(Ordering::Acquire) == PARKED {
+            // REVIEW: is the usage of an unstable feature here really worth it?
+            // Could this have the more verbose code to avoid the
+            // `checked_duration_since` unstable feature?
             if let Some(left) = timeout.checked_duration_since(Instant::now()) {
                 let nanos_left = i64::try_from(left.as_nanos()).unwrap_or(i64::max_value());
                 let r = unsafe { wasm32::i32_atomic_wait(self.ptr(), PARKED, nanos_left) };

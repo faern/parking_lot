@@ -5,6 +5,9 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
+// REVIEW: this module needs documentation with an overview of the locking
+// strategy and the protocol implemented here.
+
 use super::libstd::time::Instant;
 use super::lock_api::{GuardNoSend, RawMutex as RawMutexTrait, RawMutexFair, RawMutexTimed};
 use super::parking_lot_core::{
@@ -138,6 +141,11 @@ unsafe impl RawMutexTimed for RawMutex {
 
     #[inline]
     fn try_lock_for(&self, timeout: Duration) -> bool {
+        // REVIEW: could this perhaps just be
+        // `self.lock_slot(util::to_deadline(timeout))`
+        //
+        // REVIEW: silently handling overflow with `none` in `to_deadline` to
+        // infinitely lock is a bit sketchy, should `to_deadline` panic?
         let result = if self
             .state
             .compare_exchange_weak(0, LOCKED_BIT, Ordering::Acquire, Ordering::Relaxed)
@@ -157,6 +165,8 @@ unsafe impl RawMutexTimed for RawMutex {
 impl RawMutex {
     // Used by Condvar when requeuing threads to us, must be called while
     // holding the queue lock.
+    //
+    // REVIEW: given that a queue lock should be held, should this be `unsafe`?
     #[inline]
     pub(crate) fn mark_parked_if_locked(&self) -> bool {
         let mut state = self.state.load(Ordering::Relaxed);
@@ -178,13 +188,16 @@ impl RawMutex {
 
     // Used by Condvar when requeuing threads to us, must be called while
     // holding the queue lock.
+    //
+    // REVIEW: given that a queue lock should be held, should this be `unsafe`?
+    #[inline]
     #[inline]
     pub(crate) fn mark_parked(&self) {
         self.state.fetch_or(PARKED_BIT, Ordering::Relaxed);
     }
 
     #[cold]
-    #[inline(never)]
+    #[inline(never)] // #[inline(never)] here can probably be removed
     fn lock_slow(&self, timeout: Option<Instant>) -> bool {
         let mut spinwait = SpinWait::new();
         let mut state = self.state.load(Ordering::Relaxed);
@@ -204,12 +217,21 @@ impl RawMutex {
             }
 
             // If there is no queue, try spinning a few times
+            // REVIEW: this could use a more substantial comment explaining that
+            // we failed to grab the lock because someone else is holding it,
+            // but no one else is queued waiting for the lock so we're going to
+            // spin for a bit seeing if we can grab it without fully parking.
+            // This entire strategy would do well in documentation at the module
+            // or crate level.
             if state & PARKED_BIT == 0 && spinwait.spin() {
                 state = self.state.load(Ordering::Relaxed);
                 continue;
             }
 
             // Set the parked bit
+            //
+            // REVIEW: this could use a more substantial comment indicating why,
+            // on failure, everything is retried.
             if state & PARKED_BIT == 0 {
                 if let Err(x) = self.state.compare_exchange_weak(
                     state,
@@ -223,6 +245,12 @@ impl RawMutex {
             }
 
             // Park our thread until we are woken up by an unlock
+            //
+            // REVIEW: this could use a more substantial comment indicating each
+            // of the parameters to `park`. Why does the state have to be
+            // exactly both bits set? Why is it safe to simply clear the bit in
+            // `timed_out` and we're not racing with anyone else? Why is this
+            // `unsafe` block justified? (etc)
             unsafe {
                 let addr = self as *const _ as usize;
                 let validate = || self.state.load(Ordering::Relaxed) == LOCKED_BIT | PARKED_BIT;
@@ -257,13 +285,19 @@ impl RawMutex {
             }
 
             // Loop back and try locking again
+            // REVIEW: is it useful to spin each time the lock is held? It seems
+            // like you'd only want to spin *before* you go to sleep rather than
+            // every single time before you go to sleep. If you determine once
+            // that spinning isn't going to take long enough it seems like
+            // that's a strong indicator that if you contend it won't take long
+            // enough each time
             spinwait.reset();
             state = self.state.load(Ordering::Relaxed);
         }
     }
 
     #[cold]
-    #[inline(never)]
+    #[inline(never)] // #[inline(never)] here can probably be removed
     fn unlock_slow(&self, force_fair: bool) {
         // Unpark one thread and leave the parked bit set if there might
         // still be parked threads on this address.
@@ -276,6 +310,8 @@ impl RawMutex {
                     // Clear the parked bit if there are no more parked
                     // threads.
                     if !result.have_more_threads {
+                        // REVIEW: perhaps a `debug_assertions` use of `swap` to
+                        // verify it's the state we expect?
                         self.state.store(LOCKED_BIT, Ordering::Relaxed);
                     }
                     return TOKEN_HANDOFF;
@@ -283,6 +319,8 @@ impl RawMutex {
 
                 // Clear the locked bit, and the parked bit as well if there
                 // are no more parked threads.
+                // REVIEW: perhaps a `debug_assertions` use of `swap` to
+                // verify it's the state we expect?
                 if result.have_more_threads {
                     self.state.store(PARKED_BIT, Ordering::Release);
                 } else {
@@ -295,7 +333,7 @@ impl RawMutex {
     }
 
     #[cold]
-    #[inline(never)]
+    #[inline(never)] // #[inline(never)] here can probably be removed
     fn bump_slow(&self) {
         unsafe { deadlock::release_resource(self as *const _ as usize) };
         self.unlock_slow(true);

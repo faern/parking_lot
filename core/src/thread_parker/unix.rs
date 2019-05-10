@@ -5,6 +5,9 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
+// REVIEW: this module needs a doc comment going into more depth about how it's
+// implementing the `ThreadParker` protocol.
+
 use super::libstd::{
     thread,
     time::{Duration, Instant},
@@ -17,6 +20,7 @@ use core::{
 };
 use libc;
 
+// REVIEW: this shouldn't be duplicated with `linux.rs`
 // x32 Linux uses a non-standard type for tv_nsec in timespec.
 // See https://sourceware.org/bugzilla/show_bug.cgi?id=16437
 #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
@@ -28,6 +32,12 @@ type tv_nsec_t = libc::c_long;
 
 // Helper type for putting a thread to sleep until some other thread wakes it up
 pub struct ThreadParker {
+    // REVIEW: the safety here seems a bit sketchy mixing threadsafe and
+    // non-threadsafe types. Could the use of each field be documented as to why
+    // it's either a `Cell` or an `UnsafeCell`?
+    //
+    // I think the tl;dr; is that one of these `Cell` shoudl be an
+    // `UnsafeCell`.
     should_park: Cell<bool>,
     mutex: UnsafeCell<libc::pthread_mutex_t>,
     condvar: UnsafeCell<libc::pthread_cond_t>,
@@ -57,6 +67,8 @@ impl ThreadParker {
         let mut attr: libc::pthread_condattr_t = mem::uninitialized();
         let r = libc::pthread_condattr_init(&mut attr);
         debug_assert_eq!(r, 0);
+        // REVIEW: the comment above isn't too useful, can it be expanded to
+        // include why this is being configured?
         let r = libc::pthread_condattr_setclock(&mut attr, libc::CLOCK_MONOTONIC);
         debug_assert_eq!(r, 0);
         let r = libc::pthread_cond_init(self.condvar.get(), &attr);
@@ -66,6 +78,11 @@ impl ThreadParker {
     }
 
     // Prepares the parker. This should be called before adding it to the queue.
+    //
+    // REVIEW: sort of a meta comment about this `ThreadParker` interface in
+    // general, but why are all the functions `unsafe`? Can the centralized
+    // documentation (hinted at with another review comment) indicate why
+    // they're `unsafe`?
     #[inline]
     pub unsafe fn prepare_park(&self) {
         self.should_park.set(true);
@@ -119,6 +136,10 @@ impl ThreadParker {
                 return false;
             }
 
+            // REVIEW: the goal of the timeout comparison dance against
+            // `Instant::now` seems somewhat backwards in the sense that
+            // shouldn't `timeout` be directly converted to a `timespec` and
+            // passed to `cond_timedwait`?
             if let Some(ts) = timeout_to_timespec(timeout - now) {
                 let r = libc::pthread_cond_timedwait(self.condvar.get(), self.mutex.get(), &ts);
                 if ts.tv_sec < 0 {
@@ -131,6 +152,10 @@ impl ThreadParker {
                 }
             } else {
                 // Timeout calculation overflowed, just sleep indefinitely
+                // REVIEW: similar comment as elsewhere, but this should be
+                // consistent with libstd's implementation where we just loop
+                // until the duration is exhausted instead of waiting forever
+                // here.
                 let r = libc::pthread_cond_wait(self.condvar.get(), self.mutex.get());
                 debug_assert_eq!(r, 0);
             }
@@ -190,6 +215,9 @@ impl UnparkHandle {
     // released to avoid blocking the queue for too long.
     #[inline]
     pub unsafe fn unpark(self) {
+        // REVIEW: This feels like a nonatomic write, but it is presumably
+        // guarded by the lock. Seems like `should_park` should be an
+        // `UnsafeCell` though since it's protected by a lock.
         (*self.thread_parker).should_park.set(false);
 
         // We notify while holding the lock here to avoid races with the target

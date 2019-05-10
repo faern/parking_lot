@@ -36,6 +36,7 @@ pub unsafe trait GetThreadId {
 
     /// Returns a non-zero thread ID which identifies the current thread of
     /// execution.
+    // REVIEW: perhaps this could use the NonZero types nowadays in libstd?
     fn nonzero_thread_id(&self) -> usize;
 }
 
@@ -50,6 +51,7 @@ impl<R: RawMutex, G: GetThreadId> RawReentrantMutex<R, G> {
     #[inline]
     fn lock_internal<F: FnOnce() -> bool>(&self, try_lock: F) -> bool {
         let id = self.get_thread_id.nonzero_thread_id();
+        // REVIEW: debug assert that `id` isn't zero?
         if self.owner.load(Ordering::Relaxed) == id {
             self.lock_count.set(
                 self.lock_count
@@ -62,6 +64,7 @@ impl<R: RawMutex, G: GetThreadId> RawReentrantMutex<R, G> {
                 return false;
             }
             self.owner.store(id, Ordering::Relaxed);
+            // REVIEW: add a debug assert for lock_count == 0?
             self.lock_count.set(1);
         }
         true
@@ -82,6 +85,7 @@ impl<R: RawMutex, G: GetThreadId> RawReentrantMutex<R, G> {
 
     #[inline]
     fn unlock(&self) {
+        // REVIEW: this can overflow if called more than once on a thread
         let lock_count = self.lock_count.get() - 1;
         if lock_count == 0 {
             self.owner.store(0, Ordering::Relaxed);
@@ -95,6 +99,7 @@ impl<R: RawMutex, G: GetThreadId> RawReentrantMutex<R, G> {
 impl<R: RawMutexFair, G: GetThreadId> RawReentrantMutex<R, G> {
     #[inline]
     fn unlock_fair(&self) {
+        // REVIEW: same overflow as above
         let lock_count = self.lock_count.get() - 1;
         if lock_count == 0 {
             self.owner.store(0, Ordering::Relaxed);
@@ -178,6 +183,9 @@ unsafe impl<R: RawMutex + Send, G: GetThreadId + Send, T: ?Sized + Send> Send
     for ReentrantMutex<R, G, T>
 {
 }
+// REVIEW: this naively seems like it should require `T: Sync` as well because
+// if you share `ReentrantMutex<R, G, T>` across threads then you also have
+// access to `&T` across all threads. I may be getting this backwards though.
 unsafe impl<R: RawMutex + Sync, G: GetThreadId + Sync, T: ?Sized + Send> Sync
     for ReentrantMutex<R, G, T>
 {
@@ -223,6 +231,8 @@ impl<R: RawMutex, G: GetThreadId, T> ReentrantMutex<R, G, T> {
 }
 
 impl<R: RawMutex, G: GetThreadId, T: ?Sized> ReentrantMutex<R, G, T> {
+    // REVIEW: it seems like this function should be `unsafe` with the
+    // contract that the lock must be held when calling it
     #[inline]
     fn guard(&self) -> ReentrantMutexGuard<'_, R, G, T> {
         ReentrantMutexGuard {

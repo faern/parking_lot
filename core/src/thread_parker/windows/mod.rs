@@ -5,6 +5,13 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
+// REVIEW: this module needs a doc comment going into more depth about how it's
+// implementing the `ThreadParker` protocol.
+//
+// I've never really heard of either keyed events or wait addresses, which I
+// think is pretty normal. This seems like quite a lot of code which could use
+// some justification why it's not just using normal locks.
+
 use super::libstd::time::Instant;
 use core::{
     ptr,
@@ -164,6 +171,12 @@ impl UnparkHandle {
 // Yields the rest of the current timeslice to the OS
 #[inline]
 pub fn thread_yield() {
+    // REVIEW: this is the only implementation of `thread_yield` which isn't
+    // just `std::thread::yield_now`. If this is more appropriate than the
+    // libstd implementation of `std::thread::yield_now` then `std` should
+    // probably change! In other words `thread_yield`, this function, should
+    // always be simply a call to libstd.
+
     #[cfg(feature = "i-am-libstd")]
     use crate::sys::c::DWORD;
     #[cfg(not(feature = "i-am-libstd"))]

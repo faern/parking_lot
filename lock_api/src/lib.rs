@@ -93,6 +93,8 @@
 #![warn(rust_2018_idioms)]
 #![cfg_attr(feature = "nightly", feature(const_fn))]
 
+// REVIEW: would recommend unconditionally tagging this crate as `#![no_std]`
+
 /// Marker type which indicates that the Guard type for a lock is `Send`.
 pub struct GuardSend(());
 

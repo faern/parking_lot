@@ -67,6 +67,9 @@ use super::raw_rwlock::RawRwLock;
 /// # Examples
 ///
 /// ```
+// REVIEW: the `i-am-libstd` in doctests is pretty unfortunate, although I don't
+// know of a great way to solve it. It would be good to brainstorm at least a
+// bit to see if there's a better solution.
 /// # #[cfg(not(feature = "i-am-libstd"))]
 /// # fn main() {
 /// use parking_lot::RwLock;
